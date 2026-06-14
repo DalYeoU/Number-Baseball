@@ -72,44 +72,45 @@ bool AFoxGameModeBase::IsValidInput(const FString& InputString) const
 
 FString AFoxGameModeBase::CalculateResult(const FString& InputString, int32& OutStrikes, int32& OutBalls)
 {
-	// Strike와 Ball 개수 초기화
+	CountStrikesAndBalls(InputString, OutStrikes, OutBalls);
+	return FormatResultString(OutStrikes, OutBalls);
+}
+
+void AFoxGameModeBase::CountStrikesAndBalls(const FString& InputString, int32& OutStrikes, int32& OutBalls) const
+{
 	OutStrikes = 0;
 	OutBalls = 0;
 
-	// 입력받은 3자리 문자열을 하나씩 순회하며 비교
 	for (int32 i = 0; i < 3; i++)
 	{
-		// 언리얼 엔진 헬퍼 함수를 통해 문자(TCHAR)를 숫자(int32)로 변환
 		int32 InputDigit = InputString[i] - '0';
 
-		// 1. Strike 판정: 자릿수(인덱스 i)와 숫자 값이 모두 일치할 때
 		if (InputDigit == AnswerNumbers[i])
 		{
 			OutStrikes++;
 		}
-		// 2. Ball 판정: 자릿수는 다르지만, 정답 숫자 배열에 이 숫자가 들어있을 때
 		else if (AnswerNumbers.Contains(InputDigit))
 		{
 			OutBalls++;
 		}
 	}
+}
 
-	// 3. 판정 결과를 담을 문자열 조립
-	// 스트라이크와 볼이 둘 다 0개라면 아웃(OUT)
-	if (OutStrikes == 0 && OutBalls == 0)
+FString AFoxGameModeBase::FormatResultString(int32 Strikes, int32 Balls) const
+{
+	if (Strikes == 0 && Balls == 0)
 	{
 		return TEXT("OUT");
 	}
 
-	// 스트라이크나 볼이 존재한다면 문자열로 조립 (예: "1S", "2B", "1S2B")
 	FString ResultStr = TEXT("");
-	if (OutStrikes > 0)
+	if (Strikes > 0)
 	{
-		ResultStr += FString::Printf(TEXT("%dS"), OutStrikes);
+		ResultStr += FString::Printf(TEXT("%dS"), Strikes);
 	}
-	if (OutBalls > 0)
+	if (Balls > 0)
 	{
-		ResultStr += FString::Printf(TEXT("%dB"), OutBalls);
+		ResultStr += FString::Printf(TEXT("%dB"), Balls);
 	}
 
 	return ResultStr;
@@ -122,73 +123,85 @@ void AFoxGameModeBase::CheckGameResult(class AFoxPlayerController* PlayerControl
 	// 정답 3자리를 문자열로 조립합니다 (예: "786")
 	FString CorrectStr = FString::Printf(TEXT("%d%d%d"), AnswerNumbers[0], AnswerNumbers[1], AnswerNumbers[2]);
 	
-	/// 1. 승리판정: 누군가 3개의 스트라이크를 다 맞췄다면?
+	/// 1. 승리 판정: 누군가 3개의 스트라이크를 다 맞췄다면?
 	if (Strikes == 3)
 	{
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, FString::Printf(TEXT("WINNER: %s!"), *PlayerController->GetName()));
-		}
-		UE_LOG(LogTemp, Log, TEXT("WINNER: %s!"), *PlayerController->GetName());
-		
-		if (GameState)
-		{
-			// PlayerState로부터 실제 유저 이름을 획득합니다. (널 체크 포함)
-			FString WinnerName = PlayerController->PlayerState ? PlayerController->PlayerState->GetPlayerName() : PlayerController->GetName();
-
-			for (APlayerState* PS : GameState->PlayerArray)
-			{
-				AFoxPlayerController* PC = Cast<AFoxPlayerController>(PS->GetOwner());
-				if (PC)
-				{
-					// 3번째 인자로 조립해 둔 정답 문자열을 넘겨줍니다.
-					PC->Client_ShowGameResult(WinnerName, false, CorrectStr);
-				}
-			}
-		}
-		/// 게임을 즉시 리셋하고 종료
-		ResetGame();
+		HandleWin(PlayerController, CorrectStr);
 		return;
 	}
 	
-	/// 2. 무승부 판정: 모든 플레이어가 기회를 다 썻는지 체크
-	bool bAnyPlayerHasTryLeft = false;
+	/// 2. 무승부 판정: 모든 플레이어가 기회를 다 썼고 아무도 남은 기회가 없다면?
+	if (!HasAnyTryLeft())
+	{
+		HandleDraw(CorrectStr);
+	}
+}
+
+void AFoxGameModeBase::HandleWin(class AFoxPlayerController* Winner, const FString& CorrectAnswer)
+{
+	if (!Winner) return;
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Green, FString::Printf(TEXT("WINNER: %s!"), *Winner->GetName()));
+	}
+	UE_LOG(LogTemp, Log, TEXT("WINNER: %s!"), *Winner->GetName());
+	
+	if (GameState)
+	{
+		// PlayerState로부터 실제 유저 이름을 획득합니다 (널 체크 포함)
+		FString WinnerName = Winner->PlayerState ? Winner->PlayerState->GetPlayerName() : Winner->GetName();
+
+		for (APlayerState* PS : GameState->PlayerArray)
+		{
+			AFoxPlayerController* PC = Cast<AFoxPlayerController>(PS->GetOwner());
+			if (PC)
+			{
+				PC->Client_ShowGameResult(WinnerName, false, CorrectAnswer);
+			}
+		}
+	}
+	
+	/// 게임을 즉시 리셋하고 종료
+	ResetGame();
+}
+
+void AFoxGameModeBase::HandleDraw(const FString& CorrectAnswer)
+{
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, TEXT("GAME OVER!"));
+	}
+	UE_LOG(LogTemp, Log, TEXT("GAME OVER!"));
+	
 	if (GameState)
 	{
 		for (APlayerState* PS : GameState->PlayerArray)
 		{
-			AFoxPlayerState* State = Cast<AFoxPlayerState>(PS);
-			if (State && State->GetCurrentTryCount() < State->GetMaxTryCount())
+			AFoxPlayerController* PC = Cast<AFoxPlayerController>(PS->GetOwner());
+			if (PC)
 			{
-				bAnyPlayerHasTryLeft = true;
-				break;
+				PC->Client_ShowGameResult(TEXT("Draw"), true, CorrectAnswer);
 			}
 		}
 	}
 	
-	/// 아무도 기회가 남지 않았다면 무승부 처리
-	if (!bAnyPlayerHasTryLeft)
+	ResetGame();
+}
+
+bool AFoxGameModeBase::HasAnyTryLeft() const
+{
+	if (!GameState) return false;
+
+	for (APlayerState* PS : GameState->PlayerArray)
 	{
-		if (GEngine)
+		AFoxPlayerState* State = Cast<AFoxPlayerState>(PS);
+		if (State && State->GetCurrentTryCount() < State->GetMaxTryCount())
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::Red, TEXT("GAME OVER!"));
+			return true;
 		}
-		UE_LOG(LogTemp, Log, TEXT("GAME OVER!"));
-		
-		if (GameState)
-		{
-			for (APlayerState* PS : GameState->PlayerArray)
-			{
-				AFoxPlayerController* PC = Cast<AFoxPlayerController>(PS->GetOwner());
-				if (PC)
-				{
-					// 3번째 인자로 조립해 둔 정답 문자열을 넘겨줍니다.
-					PC->Client_ShowGameResult(TEXT("Draw"), true, CorrectStr);
-				}
-			}
-		}
-		ResetGame();
 	}
+	return false;
 }
 
 void AFoxGameModeBase::ResetGame()

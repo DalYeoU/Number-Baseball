@@ -23,4 +23,11 @@ public:
 	
 	FString CalculateResult(const FString& InputString, int32& OutStrikes, int32& OutBalls);
 	
+private:
+	void HandleWin(class AFoxPlayerController* Winner, const FString& CorrectAnswer);
+	void HandleDraw(const FString& CorrectAnswer);
+	bool HasAnyTryLeft() const;
+	
+	void CountStrikesAndBalls(const FString& InputString, int32& OutStrikes, int32& OutBalls) const;
+	FString FormatResultString(int32 Strikes, int32 Balls) const;
 };
